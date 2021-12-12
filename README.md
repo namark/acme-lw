@@ -1,5 +1,5 @@
 ## Fork info
-This is WIP fork of [acme-lw]() adapted for use in [Vircadia]() project:
+This is WIP fork of [acme-lw](https://github.com/jmccl/acme-lw) adapted for use in [Vircadia](https://github.com/vircadia) project:
 - curl has been replaced with Qt.
 - The API has been completely reworked to support asynchronous operation (interface-implementing spit is lost).
 - No API for cancellation of the asynchronous operations.
@@ -11,11 +11,11 @@ This is WIP fork of [acme-lw]() adapted for use in [Vircadia]() project:
 
 This project is yet another [_Let's Encrypt_](https://letsencrypt.org) client. It has the following properties.
 
-* The main artifact is a C++ static library.
+* ~~The main artifact is a C++ static library.~~
 * Functionality only supports creating and updating certificates using http challenges.
 * All code runs 'in process', i.e., no processes are spawned.
 
-#### Building and Installing
+#### ~~Building and Installing~~
 
 Building requires cmake, openssl and curl. On Debian based systems this will install them.
 
@@ -52,7 +52,7 @@ This library uses a private key in PEM format. If you want to use an existing _L
 format. The [acme-tiny](https://github.com/diafygi/acme-tiny) library has good documentation on
 [how to convert](https://github.com/diafygi/acme-tiny#use-existing-lets-encrypt-key) it.
 
-#### Command Line Client
+#### ~~Command Line Client~~
 
 The command line client is run as follows.
 
@@ -68,7 +68,7 @@ The behavior is similar to the official _Let's Encrypt_ client run as follows:
 certbot certonly --manual -d <domain name>
 ```
 
-#### Library API
+#### ~~Library API~~
 
 The API of the library is documented in its [header file](lib/acme-lw.h). The command line client [source](main/main.cpp)
 provides an example of how it's used.
@@ -89,10 +89,10 @@ The library itself is fairly agnostic about security. It doesn't read or write t
 you'll need to decide for yourself how you want to protect the account private key and the private key
 associated with the certificates issued.
 
-The command line client writes the certificate and private key to disk, readable only by the current user. It
+~~The command line client writes the certificate and private key to disk, readable only by the current user. It
 reads the account private key (in PEM format) from disk, so it needs to be readable by the current user.
 You'll need to decide whether that's acceptable and if so which user you want to use. (You probably want to
-create one solely for this purpose.)
+create one solely for this purpose.)~~
 
 The certificate issued uses a 2,048 bit RSA key.
 
