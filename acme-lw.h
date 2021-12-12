@@ -3,6 +3,7 @@
 
 #include "acme-exception.h"
 
+#include <ctime>
 #include <memory>
 #include <vector>
 #include <unordered_map>
