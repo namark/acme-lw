@@ -1,3 +1,12 @@
+## Fork info
+This is WIP fork of [acme-lw]() adapted for use in [Vircadia]() project:
+- curl has been replaced with Qt.
+- The API has been completely reworked to support asynchronous operation (interface-implementing spit is lost).
+- No API for cancellation of the asynchronous operations.
+- Error handling is not entirely consistent (exceptions are sometimes passed to callbacks, sometimes thrown).
+- No standalone build configuration (full source is included as submodule in a Qt project).
+
+
 ## Acme Lightweight Client
 
 This project is yet another [_Let's Encrypt_](https://letsencrypt.org) client. It has the following properties.
