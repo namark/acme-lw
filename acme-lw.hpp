@@ -749,6 +749,17 @@ void orderCertificate(Callback callback, ChallengeCallback challengeCallback, Ac
     bool first = true;
     for (const std::string& domain : domains)
     {
+		/*
+		Just check for a '"' in the domain name to make sure that we send
+		a validly formed json payload. The acme service should validate
+		that the domain name is well formed.
+		*/
+		if (domain.find('"') != string::npos)
+		{
+			callback(std::move(client), AcmeException("Certificate requested for invalid domain name: "s + domain));
+			return;
+		}
+
         if (!first)
         {
             payload += ",";
