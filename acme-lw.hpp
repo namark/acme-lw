@@ -169,7 +169,8 @@ std::string hmac_sha256(std::string key, std::string data)
 {
 	std::string output(EVP_MAX_MD_SIZE, 0);
 	unsigned int output_size;
-	HMAC(EVP_sha256(), key.data(), key.size(), data.data(), data.size(), nullptr, &output_size);
+	HMAC(EVP_sha256(), key.data(), key.size(),
+        reinterpret_cast<const unsigned char*>(data.data()), data.size(), nullptr, &output_size);
 	output.resize(output_size);
 	return output;
 }
@@ -193,7 +194,7 @@ std::string base64Decode(const T& t)
 
     BIO_push(b64.get(), bio);
 	std::string output(t.size(), 0);
-	auto read = BIO_read(b64.get(), output.data(). output.size());
+	auto read = BIO_read(b64.get(), &output.front(), output.size());
 	if(read <= 0) {
 		throw acme_lw::AcmeException("Failure in BIO_read");
 	}
@@ -605,7 +606,7 @@ void init(Callback callback, std::string signingKey, std::string directoryUrl, s
         (auto next, acme_lw_internal::Response result) {
             try {
                 auto json = nlohmann::json::parse(result.response_);
-				bool externalAccountRequired = json.at["meta"].at["externalAccountRequired"];
+				bool externalAccountRequired = json.at("meta").at("externalAccountRequired");
 				if(externalAccountRequired && (eab_kid.empty() || eab_hmac.empty())) {
 					next(AcmeException("External account binding is required for " + directoryUrl));
 				} else {
@@ -615,7 +616,8 @@ void init(Callback callback, std::string signingKey, std::string directoryUrl, s
 						json.at("newOrder"),
 						json.at("newNonce"),
 						externalAccountRequired ? std::move(eab_kid) : "",
-						externalAccountRequired ? std::move(eab_hmac)) : "";
+						externalAccountRequired ? std::move(eab_hmac) : ""
+                    );
 					next(std::move(client));
 				}
             } catch (const std::exception& e) {
@@ -668,15 +670,15 @@ void createAccount(Callback callback, AcmeClient client) {
     auto newAccountUrl = client.impl_->newAccountUrl();
 	nlohmann::json payload = {{"termsOfServiceAgreed", true}};
 
-	if(!client.impl_->eab_kid.empty()) {
+	if(!client.impl_->eab_kid().empty()) {
 		std::string eabProtected = urlSafeBase64Encode(nlohmann::json({
 			{"alg", "HS256"},
-			{"kid", client.impl_->eab_kid},
+			{"kid", client.impl_->eab_kid()},
 			{"url", newAccountUrl}
 		}));
 		std::string eabPayload = urlSafeBase64Encode(client.impl_->jwk());
 		payload["externalAccountBinding"] = {
-			{"signature", hmac_sha256(client.impl_->eab_hmac, eabProtected + "." + eabPayload)}
+			{"signature", hmac_sha256(client.impl_->eab_hmac(), eabProtected + "." + eabPayload)},
 			{"protected", std::move(eabProtected)},
 			{"payload", std::move(eabPayload)},
 		};
@@ -823,7 +825,7 @@ void orderCertificate(Callback callback, ChallengeCallback challengeCallback, Ac
 		a validly formed json payload. The acme service should validate
 		that the domain name is well formed.
 		*/
-		if (domain.find('"') != string::npos)
+		if (domain.find('"') != std::string::npos)
 		{
 			callback(std::move(client), AcmeException("Certificate requested for invalid domain name: "s + domain));
 			return;
