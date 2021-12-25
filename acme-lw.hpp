@@ -600,7 +600,7 @@ template <typename Callback>
 void init(Callback callback, std::string signingKey, std::string directoryUrl, std::string eab_kid, std::string eab_hmac) {
     acme_lw_internal::doGet(forwardAcmeError(
         [signingKey = std::move(signingKey),
-        directoryUrl = std::move(directoryUrl),
+        directoryUrl,
 		eab_kid = std::move(eab_kid),
 		eab_hmac = std::move(eab_hmac)]
         (auto next, acme_lw_internal::Response result) {
@@ -625,7 +625,7 @@ void init(Callback callback, std::string signingKey, std::string directoryUrl, s
             }
 
         }, std::move(callback)
-    ), directoryUrl);
+    ), std::move(directoryUrl));
 }
 
 template <typename Callback>
