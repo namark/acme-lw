@@ -175,8 +175,7 @@ std::string hmac_sha256(std::string key, std::string data)
 	return output;
 }
 
-template<typename T>
-std::string base64Decode(const T& t)
+std::string base64Decode(const std::string& t)
 {
 	// TODO:
     if (!t.size()) {
@@ -196,7 +195,9 @@ std::string base64Decode(const T& t)
 	std::string output(t.size(), 0);
 	auto read = BIO_read(b64.get(), &output.front(), output.size());
 	if(read <= 0) {
-		throw acme_lw::AcmeException("Failure in BIO_read");
+		throw acme_lw::AcmeException("Failure in base64Decode, BIO_read returned " + std::to_string(read) + '\n'
+            + "input: " + t + '\n'
+            + "output: " + output + '\n');
 	}
 	output.resize(read);
 
@@ -228,6 +229,26 @@ std::string base64Encode(const T& t)
     }
 
     return toString(bio);
+}
+
+std::string urlSafeBase64Decode(std::string s)
+{
+    // We get url safe base64 encoding and openssl requires regular
+    // base64, so we convert.
+    size_t len = s.size();
+    for (size_t i = 0; i < len; ++i)
+    {
+        if (s[i] == '-')
+        {
+            s[i] = '+';
+        }
+        else if (s[i] == '_')
+        {
+            s[i] = '/';
+        }
+    }
+
+    return base64Decode(s);
 }
 
 template<typename T>
@@ -443,7 +464,7 @@ struct AcmeClientImpl
         newOrderUrl_(std::move(newOrderUrl)),
         newNonceUrl_(std::move(newNonceUrl)),
 		eab_kid_(eab_kid),
-		eab_hmac_(base64Decode(eab_hmac))
+		eab_hmac_(urlSafeBase64Decode(eab_hmac))
     {
 
         // Create the private key and 'header suffix', used to sign LE certs.
