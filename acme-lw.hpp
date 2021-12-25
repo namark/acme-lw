@@ -163,6 +163,44 @@ inline std::string toString(BIO *bio)
     return std::string(&v.front(), v.size());
 }
 
+
+std::string hmac_sha256(std::string key, std::string data)
+{
+	std::string output(EVP_MAX_MD_SIZE, 0);
+	unsigned int output_size;
+	HMAC(EVP_sha256(), key.data(), key.size(), data.data(), data.size(), nullptr, &output_size);
+	output.resize(output_size);
+	return output;
+}
+
+template<typename T>
+std::string base64Decode(const T& t)
+{
+	// TODO:
+    if (!t.size()) {
+        return "";
+    }
+    // Use openssl to do this since we're already linking to it.
+
+    // Don't need (or want) a BIOptr since BIO_push chains it to b64
+    BIO * bio(BIO_new_mem_buf(&t.front(), t.size()));
+    BIOptr b64(BIO_new(BIO_f_base64()));
+
+    // OpenSSL inserts new lines by default to make it look like PEM format.
+    // Turn that off.
+    BIO_set_flags(b64.get(), BIO_FLAGS_BASE64_NO_NL);
+
+    BIO_push(b64.get(), bio);
+	std::string output(t.size(), 0);
+	auto read = BIO_read(b64.get(), output.data(). output.size());
+	if(read <= 0) {
+		throw acme_lw::AcmeException("Failure in BIO_read");
+	}
+	output.resize(read);
+
+    return output;
+}
+
 template<typename T>
 std::string base64Encode(const T& t)
 {
@@ -401,7 +439,9 @@ struct AcmeClientImpl
         : privateKey_(EVP_PKEY_new()),
         newAccountUrl_(std::move(newAccountUrl)),
         newOrderUrl_(std::move(newOrderUrl)),
-        newNonceUrl_(std::move(newNonceUrl))
+        newNonceUrl_(std::move(newNonceUrl)),
+		eab_kid_(eab_kid),
+		eab_hmac_(base64Decode(eab_hmac))
     {
 
         // Create the private key and 'header suffix', used to sign LE certs.
@@ -427,6 +467,7 @@ struct AcmeClientImpl
                                     "kty": "RSA",
                                     "n":")"s + urlSafeBase64Encode(n) + u8R"("
                                 })";
+		jwk_ = jwkValue;
         jwkThumbprint_ = makeJwkThumbprint(jwkValue);
 
         // We use jwk for the first request, which allows us to get
@@ -465,17 +506,23 @@ struct AcmeClientImpl
     const std::string& newAccountUrl() { return newAccountUrl_; }
     const std::string& newOrderUrl() { return newOrderUrl_; }
     const std::string& newNonceUrl() { return newNonceUrl_; }
+    const std::string& eab_kid() { return eab_kid_; }
+    const std::string& eab_hmac() { return eab_hmac_; }
     const std::string& jwkThumbprint() { return jwkThumbprint_; }
+    const std::string& jwk() { return jwk_; }
 
     std::string      headerSuffix;
 
     private:
     EVP_PKEYptr privateKey_;
     std::string      jwkThumbprint_;
+    std::string      jwk_;
 
     std::string newAccountUrl_;
     std::string newOrderUrl_;
     std::string newNonceUrl_;
+	std::string eab_kid_;
+	std::string eab_hmac_;
 
 };
 
@@ -548,19 +595,28 @@ CaptureAcmeClient<F> captureAcmeClient(AcmeClient client, F&& f) {
 }
 
 template <typename Callback>
-void init(Callback callback, std::string signingKey, std::string directoryUrl) {
+void init(Callback callback, std::string signingKey, std::string directoryUrl, std::string eab_kid, std::string eab_hmac) {
     acme_lw_internal::doGet(forwardAcmeError(
         [signingKey = std::move(signingKey),
-        directoryUrl]
+        directoryUrl = std::move(directoryUrl),
+		eab_kid = std::move(eab_kid),
+		eab_hmac = std::move(eab_hmac)]
         (auto next, acme_lw_internal::Response result) {
             try {
                 auto json = nlohmann::json::parse(result.response_);
-                AcmeClient client(
-                    std::move(signingKey),
-                    json.at("newAccount"),
-                    json.at("newOrder"),
-                    json.at("newNonce"));
-                next(std::move(client));
+				bool externalAccountRequired = json.at["meta"].at["externalAccountRequired"];
+				if(externalAccountRequired && (eab_kid.empty() || eab_hmac.empty())) {
+					next(AcmeException("External account binding is required for " + directoryUrl));
+				} else {
+					AcmeClient client(
+						std::move(signingKey),
+						json.at("newAccount"),
+						json.at("newOrder"),
+						json.at("newNonce"),
+						externalAccountRequired ? std::move(eab_kid) : "",
+						externalAccountRequired ? std::move(eab_hmac)) : "";
+					next(std::move(client));
+				}
             } catch (const std::exception& e) {
                 next(AcmeException("Unable to initialize endpoints from "s + directoryUrl + ": " + e.what()));
             }
@@ -609,6 +665,22 @@ template <typename Callback>
 void createAccount(Callback callback, AcmeClient client) {
     std::pair<std::string, std::string> header = make_pair("location"s, ""s);
     auto newAccountUrl = client.impl_->newAccountUrl();
+	nlohmann::json payload = {{"termsOfServiceAgreed", true}};
+
+	if(!client.impl_->eab_kid.empty()) {
+		std::string eabProtected = urlSafeBase64Encode(nlohmann::json({
+			{"alg", "HS256"},
+			{"kid", client.impl_->eab_kid},
+			{"url", newAccountUrl}
+		}));
+		std::string eabPayload = urlSafeBase64Encode(client.impl_->jwk());
+		payload["externalAccountBinding"] = {
+			{"signature", hmac_sha256(client.impl_->eab_hmac, eabProtected + "." + eabPayload)}
+			{"protected", std::move(eabProtected)},
+			{"payload", std::move(eabPayload)},
+		};
+	}
+
     sendRequest(
         forwardAcmeError([](auto next, auto client, auto response){
             client.impl_->headerSuffix = u8R"(
@@ -618,11 +690,7 @@ void createAccount(Callback callback, AcmeClient client) {
         }, std::move(callback)),
         std::move(client),
         std::move(newAccountUrl),
-        u8R"(
-            {
-                "termsOfServiceAgreed": true
-            }
-        )"s,
+		payload.dump(),
         "location"
     );
 }

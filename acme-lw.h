@@ -84,7 +84,8 @@ public:
 */
 template <typename Callback>
 void init(Callback, std::string signingKey,
-    std::string directoryUrl = "https://acme-staging-v02.api.letsencrypt.org/directory");
+    std::string directoryUrl = "https://acme-staging-v02.api.letsencrypt.org/directory",
+	std::string eab_kid = "", std::string eab_hmac = "");
 
 template <typename Callback>
 void sendRequest(Callback, AcmeClient,
