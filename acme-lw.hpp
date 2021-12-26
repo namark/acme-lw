@@ -23,7 +23,6 @@
 
 #include <algorithm>
 #include <ctype.h>
-#include <sstream>
 #include <stdio.h>
 #include <typeinfo>
 #include <vector>
@@ -164,17 +163,6 @@ inline std::string toString(BIO *bio)
     return std::string(&v.front(), v.size());
 }
 
-
-std::string hmac_sha256(std::string key, std::string data)
-{
-	std::string output(EVP_MAX_MD_SIZE, 0);
-	unsigned int output_size;
-	HMAC(EVP_sha256(), key.data(), key.size(),
-        reinterpret_cast<const unsigned char*>(data.data()), data.size(), nullptr, &output_size);
-	output.resize(output_size);
-	return output;
-}
-
 std::string base64Decode(const std::string& t)
 {
 	// TODO:
@@ -235,18 +223,24 @@ std::string urlSafeBase64Decode(std::string s)
 {
     // We get url safe base64 encoding and openssl requires regular
     // base64, so we convert.
-    size_t len = s.size();
-    for (size_t i = 0; i < len; ++i)
+
+    for(auto&& ch : s)
     {
-        if (s[i] == '-')
+        if (ch == '-')
         {
-            s[i] = '+';
+            ch = '+';
         }
-        else if (s[i] == '_')
+        else if (ch == '_')
         {
-            s[i] = '/';
+            ch = '/';
         }
     }
+
+    const std::size_t fullChunkSize = 4;
+    auto trailing = s.size() % fullChunkSize;
+    auto lastChunkSize = 0 != trailing ? trailing : fullChunkSize;
+    auto padding = fullChunkSize - lastChunkSize;
+    s += std::string(padding,'=');
 
     return base64Decode(s);
 }
@@ -286,6 +280,61 @@ inline std::string urlSafeBase64Encode(const BIGNUM * bn)
     BN_bn2bin(bn, &buffer.front());
 
     return urlSafeBase64Encode(buffer);
+}
+
+struct hmacAlg {
+    std::string name;
+    const EVP_MD* evp_md;
+};
+
+hmacAlg getHmacAlg(const std::string& key)
+{
+    struct keySizeAlgPair {
+        std::size_t keySize;
+        hmacAlg alg;
+    };
+
+    const std::array<keySizeAlgPair,3> map {{
+        {32, {"HS256", EVP_sha256()}},
+        {64, {"HS512", EVP_sha512()}},
+        {48, {"HS384", EVP_sha384()}}
+    }};
+
+    auto found = std::find_if(map.begin(), map.end(),
+        [keySize = key.size()] (auto pair) { return keySize == pair.keySize; });
+
+    if(found == map.end()) {
+        auto expected = std::accumulate(map.begin(), map.end(), std::string(), [](auto& all, auto& pair) {
+            auto one = "size " + std::to_string(pair.keySize) + " for " + pair.alg.name;
+            return all.empty() ? one : all + ", " + one;
+        });
+        throw AcmeException("Unexpected HMAC key size: " + std::to_string(key.size()) + '\n'
+            + "key: " + urlSafeBase64Encode(key) + '\n'
+            + "expected: " + expected + '\n'
+        );
+    }
+
+    return found->alg;
+}
+
+std::string hmacSha(const std::string& key, const std::string& data)
+{
+    auto alg = getHmacAlg(key);
+	std::string output(EVP_MAX_MD_SIZE, 0);
+	unsigned int output_size = output.size();
+	if (! HMAC(alg.evp_md, key.data(), key.size(),
+        reinterpret_cast<const unsigned char*>(data.data()), data.size(),
+        reinterpret_cast<unsigned char*>(&output.front()), &output_size)
+       )
+    {
+        throw AcmeException("Failed to generate HMAC signature\n"s
+            + "key: " + urlSafeBase64Encode(key) + '\n'
+            + "data: " + data + '\n'
+            + "alg: " + alg.name
+        );
+    }
+	output.resize(output_size);
+	return output;
 }
 
 inline EVP_PKEYptr makePrivateKey() {
@@ -466,7 +515,6 @@ struct AcmeClientImpl
 		eab_kid_(eab_kid),
 		eab_hmac_(urlSafeBase64Decode(eab_hmac))
     {
-
         // Create the private key and 'header suffix', used to sign LE certs.
         BIOptr bio(BIO_new_mem_buf(accountPrivateKey.c_str(), -1));
         RSA * rsa(PEM_read_bio_RSAPrivateKey(bio.get(), nullptr, nullptr, nullptr));
@@ -627,9 +675,9 @@ void init(Callback callback, std::string signingKey, std::string directoryUrl, s
         (auto next, acme_lw_internal::Response result) {
             try {
                 auto json = nlohmann::json::parse(result.response_);
-				bool externalAccountRequired = json.at("meta").at("externalAccountRequired");
+				bool externalAccountRequired = json["meta"].value("externalAccountRequired", false);
 				if(externalAccountRequired && (eab_kid.empty() || eab_hmac.empty())) {
-					next(AcmeException("External account binding is required for " + directoryUrl));
+					next(AcmeException("External account binding is required for " + directoryUrl)); // TODO: move out of try
 				} else {
 					AcmeClient client(
 						std::move(signingKey),
@@ -639,10 +687,11 @@ void init(Callback callback, std::string signingKey, std::string directoryUrl, s
 						externalAccountRequired ? std::move(eab_kid) : "",
 						externalAccountRequired ? std::move(eab_hmac) : ""
                     );
-					next(std::move(client));
+					next(std::move(client)); // TODO: move out of try
 				}
             } catch (const std::exception& e) {
-                next(AcmeException("Unable to initialize endpoints from "s + directoryUrl + ": " + e.what()));
+                next(AcmeException("Unable to initialize endpoints from "s + directoryUrl + " : " + e.what() + '\n'
+                    + toT<std::string>(result.response_)));
             }
 
         }, std::move(callback)
@@ -692,17 +741,25 @@ void createAccount(Callback callback, AcmeClient client) {
 	nlohmann::json payload = {{"termsOfServiceAgreed", true}};
 
 	if(!client.impl_->eab_kid().empty()) {
-		std::string eabProtected = urlSafeBase64Encode(nlohmann::json({
-			{"alg", "HS256"},
-			{"kid", client.impl_->eab_kid()},
-			{"url", newAccountUrl}
-		}));
-		std::string eabPayload = urlSafeBase64Encode(client.impl_->jwk());
-		payload["externalAccountBinding"] = {
-			{"signature", hmac_sha256(client.impl_->eab_hmac(), eabProtected + "." + eabPayload)},
-			{"protected", std::move(eabProtected)},
-			{"payload", std::move(eabPayload)},
-		};
+        try {
+            // NOTE: alg and signature below can be inlined if https://github.com/nlohmann/json/issues/3215 is fixed
+            auto alg = getHmacAlg(client.impl_->eab_hmac());
+            std::string eabProtected = urlSafeBase64Encode(nlohmann::json({
+                {"alg", alg.name},
+                {"kid", client.impl_->eab_kid()},
+                {"url", newAccountUrl}
+            }).dump());
+            std::string eabPayload = urlSafeBase64Encode(client.impl_->jwk());
+            std::string signature = urlSafeBase64Encode(hmacSha(client.impl_->eab_hmac(), eabProtected + "." + eabPayload));
+            payload["externalAccountBinding"] = {
+                {"signature", std::move(signature) },
+                {"protected", std::move(eabProtected)},
+                {"payload", std::move(eabPayload)},
+            };
+        } catch (const AcmeException& e) {
+            callback(std::move(client), AcmeException("EAB payload error: "s + e.what()));
+            return;
+        }
 	}
 
     sendRequest(
