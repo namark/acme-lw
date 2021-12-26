@@ -52,7 +52,8 @@ void doPost(Callback callback, const std::string& url, const std::string& postBo
     QObject::connect(reply, &QNetworkReply::finished, [reply, callback = std::move(callback), headerKey]() mutable {
         auto replyPtr = QDelayedNetworkReply(reply);
         if(replyPtr->error() != QNetworkReply::NoError) {
-            callback(AcmeException(replyPtr->errorString().toStdString()));
+            callback(AcmeException("Error: " + replyPtr->errorString().toStdString() + '\n'
+                + "Response: " + replyPtr->readAll().toStdString()));
         } else {
             Response response{};
             if(headerKey)
