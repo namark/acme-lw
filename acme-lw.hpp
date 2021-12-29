@@ -477,19 +477,35 @@ inline std::string makeJwkThumbprint(const std::string& jwk)
     return sha256(strippedJwk);
 }
 
-template<typename T>
-T extractExpiryData(const acme_lw::Certificate& certificate, const std::function<T (const ASN1_TIME *)>& extractor)
+template <typename T>
+ExpiryResult<T> makeExpiryResult(T value) { return {true, value, AcmeException("")}; }
+template <typename T>
+ExpiryResult<T> makeExpiryResult(ExpiryResult<T> value) { return value; }
+
+template<typename T, typename Extractor>
+ExpiryResult<T> extractExpiryDataError(const acme_lw::Certificate& certificate, const Extractor& extractor)
 {
     BIOptr bio(BIO_new(BIO_s_mem()));
     if (BIO_write(bio.get(), &certificate.fullchain.front(), certificate.fullchain.size()) <= 0)
     {
-        throw acme_lw::AcmeException("Failure in BIO_write");
+        return {false, T{}, acme_lw::AcmeException("Failure in BIO_write")};
     }
     X509ptr x509(PEM_read_bio_X509(bio.get(), nullptr, nullptr, nullptr));
 
     ASN1_TIME * t = X509_getm_notAfter(x509.get());
 
-    return extractor(t);
+    return makeExpiryResult(extractor(t));
+}
+
+template<typename T, typename Extractor>
+T extractExpiryData(const acme_lw::Certificate& certificate, const Extractor& extractor)
+{
+    auto ret = extractExpiryDataError<T>(certificate, extractor);
+    if(ret.success) {
+        return ret.value;
+    } else {
+        throw ret.error;
+    }
 }
 
 }

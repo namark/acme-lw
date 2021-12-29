@@ -20,9 +20,10 @@ AcmeClient::AcmeClient(
 {
 }
 
-std::chrono::system_clock::time_point Certificate::getExpiry() const
+ExpiryTimepointResult Certificate::getExpiryOrError() const
 {
-    return extractExpiryData<std::chrono::system_clock::time_point>(*this, [](const ASN1_TIME * t)
+    return extractExpiryDataError<std::chrono::system_clock::time_point>(*this, [](const ASN1_TIME * t)
+            -> ExpiryTimepointResult
         {
 #ifdef OPENSSL_TO_TM
             // Prior to openssl 1.1.1 (or so?) ASN1_TIME_to_tm didn't exist so there was no
@@ -31,10 +32,14 @@ std::chrono::system_clock::time_point Certificate::getExpiry() const
             ::tm out;
             if (!ASN1_TIME_to_tm(t, &out))
             {
-                throw AcmeException("Failure in ASN1_TIME_to_tm");
+                return {false, {}, AcmeException("Failure in ASN1_TIME_to_tm")};
             }
 
-            return std::system_clock::from_time_t(timegm(&out));
+            return {
+                true,
+                std::system_clock::from_time_t(timegm(&out));
+                AcmeException("")
+            };
 #else
             // See this link for issues in converting from ASN1_TIME to epoch time.
             // https://stackoverflow.com/questions/10975542/asn1-time-to-time-t-conversion
@@ -42,18 +47,32 @@ std::chrono::system_clock::time_point Certificate::getExpiry() const
             int days, seconds;
             if (!ASN1_TIME_diff(&days, &seconds, nullptr, t))
             {
-                throw AcmeException("Failure in ASN1_TIME_diff");
+                return {false, {}, AcmeException("Failure in ASN1_TIME_diff")};
             }
 
             // Hackery here, since the call to system_clock::now() will not necessarily match
             // the equivilent call openssl just made in the 'diff' call above.
             // Nonetheless, it'll be close at worst.
-            return std::chrono::system_clock::now()
-                + std::chrono::seconds(seconds)
-                + std::chrono::hours(24) * days;
+            return {
+                true,
+                std::chrono::system_clock::now()
+                    + std::chrono::seconds(seconds)
+                    + std::chrono::hours(24) * days,
+                AcmeException("")
+            };
 
 #endif
         });
+}
+
+std::chrono::system_clock::time_point Certificate::getExpiry() const
+{
+    auto ret = getExpiryOrError();
+    if(ret.success) {
+        return ret.value;
+    } else {
+        throw ret.error;
+    }
 }
 
 std::string Certificate::getExpiryDisplay() const

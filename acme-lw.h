@@ -12,6 +12,15 @@
 namespace acme_lw
 {
 
+template <typename T>
+struct ExpiryResult {
+    bool success;
+    T value;
+    AcmeException error;
+};
+
+using ExpiryTimepointResult = ExpiryResult<std::chrono::system_clock::time_point>;
+
 struct Certificate
 {
     std::string fullchain;
@@ -29,6 +38,7 @@ struct Certificate
         whether the certificate needs to be renewed.
     */
     std::chrono::system_clock::time_point getExpiry() const;
+    ExpiryTimepointResult getExpiryOrError() const;
 
     /**
         Returns the 'Not After' result that openssl would display if
