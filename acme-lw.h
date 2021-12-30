@@ -96,12 +96,25 @@ void sendRequest(Callback, AcmeClient,
 template <typename Callback>
 void createAccount(Callback, AcmeClient);
 
-template <typename Callback, typename ChallengeCallback>
-void orderCertificate(Callback, ChallengeCallback, AcmeClient,
-    std::vector<identifier>);
+template <typename Callback>
+void orderCertificate(Callback, AcmeClient, std::vector<identifier>);
+
+struct Challenge {
+    std::string statusUrl;
+    std::string identifier;
+    std::string location;
+    std::string keyAuthorization;
+};
+
+struct OrderInfo {
+    std::string url;
+    std::string finalizeUrl;
+    std::vector<identifier> identifiers;
+    std::vector<Challenge> challenges;
+};
 
 template <typename Callback>
-void retrieveCertificate(Callback, AcmeClient, std::vector<identifier>, std::vector<std::string> challenges, std::string url, std::string finalizeUrl);
+void retrieveCertificate(Callback, AcmeClient, OrderInfo);
 
 template <typename Callback>
 void waitForGet(Callback, std::string url, std::chrono::milliseconds timeout, std::chrono::milliseconds interval);

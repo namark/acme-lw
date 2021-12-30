@@ -829,6 +829,8 @@ class OutStack
 
     bool empty() { return data.empty(); };
     auto& top() { return *(data.end() -1); }
+    void push(const T& value) { data.push_back(value); }
+    void push(T&& value) { data.push_back(std::move(value)); }
     template <typename V>
     void push(V&& value) { data.push_back(std::forward<V>(value)); }
 
@@ -840,11 +842,11 @@ class OutStack
     std::vector<T> data;
 };
 
-template <typename Callback, typename ChallengeCallback, typename In>
-void processAuthorizations(Callback callback, ChallengeCallback challengeCallback, AcmeClient client, InStack<In> autorizations, OutStack<std::string> challengeUrls)
+template <typename Callback, typename In>
+void processAuthorizations(Callback callback, AcmeClient client, InStack<In> autorizations, OutStack<Challenge> challenges)
 {
     if(autorizations.empty()) {
-        callback(std::move(client), std::move(challengeUrls));
+        callback(std::move(client), std::move(challenges));
         return;
     }
 
@@ -852,7 +854,7 @@ void processAuthorizations(Callback callback, ChallengeCallback challengeCallbac
     autorizations.pop();
     sendRequest(
         forwardAcmeError(
-            [autorizations = std::move(autorizations), challengeUrls = std::move(challengeUrls), challengeCallback = std::move( challengeCallback)]
+            [autorizations = std::move(autorizations), challenges = std::move(challenges)]
             (auto next, auto client, auto response) mutable {
                 // TODO: lots of potential json parsing exceptions here, need to wrap them in high level acme exceptions and pass to callback
                 auto authz = nlohmann::json::parse(response.response_);
@@ -868,20 +870,19 @@ void processAuthorizations(Callback callback, ChallengeCallback challengeCallbac
                 if (authz.at("status") == "valid") {
                     processAuthorizations(
                         std::move(next),
-                        std::move(challengeCallback),
                         std::move(client),
                         std::move(autorizations),
-                        std::move(challengeUrls));
+                        std::move(challenges));
                     return;
                 }
 
                 std::string identifier = authz.at("identifier").at("value");
 
-                auto challenges = authz.at("challenges");
-                auto httpChallenge = std::find_if(challenges.begin(), challenges.end(),
+                auto challengesJson = authz.at("challenges");
+                auto httpChallenge = std::find_if(challengesJson.begin(), challengesJson.end(),
                     [](auto challenge){ return challenge.at("type") == "http-01"; });
 
-                if(httpChallenge == challenges.end()) {
+                if(httpChallenge == challengesJson.end()) {
                     next(std::move(client), AcmeException("Http challenge not found for " + identifier));
                     return;
                 }
@@ -889,14 +890,12 @@ void processAuthorizations(Callback callback, ChallengeCallback challengeCallbac
                 std::string token = httpChallenge->at("token");
                 std::string location = "/.well-known/acme-challenge/"s + token;
                 std::string keyAuthorization = token + "." + client.impl_->jwkThumbprint();
-                challengeCallback(identifier, location, keyAuthorization);
-                challengeUrls.push(httpChallenge->at("url"));
+                challenges.push({httpChallenge->at("url"), identifier, location, keyAuthorization});
                 processAuthorizations(
                     std::move(next),
-                    std::move(challengeCallback),
                     std::move(client),
                     std::move(autorizations),
-                    std::move(challengeUrls));
+                    std::move(challenges));
             },
             std::move(callback)
         ),
@@ -904,8 +903,8 @@ void processAuthorizations(Callback callback, ChallengeCallback challengeCallbac
     );
 }
 
-template <typename Callback, typename ChallengeCallback>
-void orderCertificate(Callback callback, ChallengeCallback challengeCallback, AcmeClient client, std::vector<identifier> identifiers) {
+template <typename Callback>
+void orderCertificate(Callback callback, AcmeClient client, std::vector<identifier> identifiers) {
     if (identifiers.empty()) {
         callback(std::move(client), AcmeException("There must be at least one identifier name in a certificate"));
         return;
@@ -946,10 +945,7 @@ void orderCertificate(Callback callback, ChallengeCallback challengeCallback, Ac
     auto newOrderUrl = client.impl_->newOrderUrl();
     sendRequest(
         forwardAcmeError(
-            [
-                challengeCallback = std::move(challengeCallback),
-                identifiers = std::move(identifiers)
-            ]
+            [ identifiers = std::move(identifiers) ]
             (auto next, auto client, auto response) mutable {
 
                 std::string currentOrderUrl = response.headerValue_;
@@ -962,11 +958,16 @@ void orderCertificate(Callback callback, ChallengeCallback challengeCallback, Ac
                     forwardAcmeError(
                         [identifiers = std::move(identifiers), currentOrderUrl = std::move(response.headerValue_), finalizeUrl = json.at("finalize")]
                         (auto next, auto client, auto challenges) mutable {
-                            next(std::move(client), std::move(challenges), std::move(identifiers), std::move(finalizeUrl), std::move(currentOrderUrl));
+                            next(std::move(client), OrderInfo{
+                                std::move(currentOrderUrl),
+                                std::move(finalizeUrl),
+                                std::move(identifiers),
+                                std::move(challenges)
+                            });
                         },
                         std::move(next)
                     ),
-                    std::move(challengeCallback), std::move(client), makeInStack(authorizations), OutStack<std::string>()
+                    std::move(client), makeInStack(authorizations), OutStack<Challenge>()
                 );
 
             },
@@ -1054,12 +1055,16 @@ void checkChallenges(Callback callback, AcmeClient client, InStack<std::vector<s
 }
 
 template <typename Callback>
-void retrieveCertificate(Callback callback, AcmeClient client, std::vector<identifier> identifiers, std::vector<std::string> challenges, std::string orderUrl, std::string finalizeUrl){
+void retrieveCertificate(Callback callback, AcmeClient client, OrderInfo orderInfo) {
+    std::vector<std::string> challengeUrls;
+    for(auto&& challenge : orderInfo.challenges) {
+        challengeUrls.push_back(std::move(challenge.statusUrl));
+    }
     checkChallenges(
         forwardAcmeError([
-            identifiers = std::move(identifiers),
-            orderUrl = std::move(orderUrl),
-            finalizeUrl = std::move(finalizeUrl)
+            identifiers = std::move(orderInfo.identifiers),
+            orderUrl = std::move(orderInfo.url),
+            finalizeUrl = std::move(orderInfo.finalizeUrl)
         ](auto next, auto client) mutable {
             // TODO: try
             auto r = makeCertificateSigningRequest(identifiers);
@@ -1092,7 +1097,7 @@ void retrieveCertificate(Callback callback, AcmeClient client, std::vector<ident
                      })"
             );
         }, std::move(callback)),
-    std::move(client), std::move(challenges));
+    std::move(client), std::move(challengeUrls));
 }
 
 }
