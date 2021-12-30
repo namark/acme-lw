@@ -66,25 +66,17 @@ public:
             std::string eab_kid = "",
             std::string eab_hmac = "");
 
-    /**
-        The implementation of this function allows Let's Encrypt to
-        verify that the requestor has control of the domain name.
-
-        The callback may be called once for each domain name in the
-        'issueCertificate' call. The callback should do whatever is
-        needed so that a GET on the 'url' returns the 'keyAuthorization',
-        (which is what the Acme protocol calls the expected response.)
-
-        Note that this function may not be called in cases where
-        Let's Encrypt already believes the caller has control
-        of the domain name.
-    */
-    typedef void (*Callback) (  const std::string& domainName,
-                                const std::string& url,
-                                const std::string& keyAuthorization);
 
     std::unique_ptr<AcmeClientImpl> impl_;
 };
+
+struct identifier {
+    enum class type { ip, domain };
+    std::string name;
+    enum type type;
+};
+
+std::string toString(enum identifier::type t);
 
 //TODO: document/specify callback parameters
 // maybe also define callback class interface to restore interface/implementation division
@@ -94,7 +86,7 @@ public:
 */
 template <typename Callback>
 void init(Callback, std::string signingKey,
-    std::string directoryUrl = "https://acme-staging-v02.api.letsencrypt.org/directory",
+    std::string directoryUrl,
 	std::string eab_kid = "", std::string eab_hmac = "");
 
 template <typename Callback>
@@ -106,10 +98,10 @@ void createAccount(Callback, AcmeClient);
 
 template <typename Callback, typename ChallengeCallback>
 void orderCertificate(Callback, ChallengeCallback, AcmeClient,
-    std::vector<std::string> domains);
+    std::vector<identifier>);
 
 template <typename Callback>
-void retrieveCertificate(Callback, AcmeClient, std::vector<std::string> domains, std::vector<std::string> challenges, std::string url, std::string finalizeUrl);
+void retrieveCertificate(Callback, AcmeClient, std::vector<identifier>, std::vector<std::string> challenges, std::string url, std::string finalizeUrl);
 
 template <typename Callback>
 void waitForGet(Callback, std::string url, std::chrono::milliseconds timeout, std::chrono::milliseconds interval);

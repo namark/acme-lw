@@ -1,5 +1,17 @@
 #include "acme-lw.hpp"
 
+namespace acme_lw
+{
+    std::string toString(enum identifier::type t) {
+        switch(t) {
+            case identifier::type::ip: return "ip";
+            case identifier::type::domain: return "dns";
+        }
+
+        return "";
+    };
+} // namespace acme_lw
+
 using namespace acme_lw;
 
 AcmeClient::AcmeClient(

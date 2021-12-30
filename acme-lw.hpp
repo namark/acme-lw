@@ -114,6 +114,7 @@ typedef Ptr<EVP_PKEY, EVP_PKEY_free>                            EVP_PKEYptr;
 typedef Ptr<X509, X509_free>                                    X509ptr;
 typedef Ptr<X509_REQ, X509_REQ_free>                            X509_REQptr;
 
+
 inline void freeStackOfExtensions(STACK_OF(X509_EXTENSION) * e)
 {
     sk_X509_EXTENSION_pop_free(e, X509_EXTENSION_free);
@@ -386,23 +387,23 @@ inline std::string toPemString(const EVP_PKEYptr& key) {
 }
 
 // returns pair<CSR, privateKey>
-inline std::pair<std::string, std::string> makeCertificateSigningRequest(const std::vector<std::string>& domainNames) {
+inline std::pair<std::string, std::string> makeCertificateSigningRequest(const std::vector<identifier>& identifiers) {
 
     X509_REQptr req(X509_REQ_new());
 
-    auto name = domainNames.begin();
+    auto identifier = identifiers.begin();
 
     X509_NAME * cn = X509_REQ_get_subject_name(req.get());
     if (!X509_NAME_add_entry_by_txt(cn,
                                     "CN",
                                     MBSTRING_ASC,
-                                    reinterpret_cast<const unsigned char*>(name->c_str()),
+                                    reinterpret_cast<const unsigned char*>(identifier->name.c_str()),
                                     -1, -1, 0))
     {
         throw acme_lw::AcmeException("Failure in X509_Name_add_entry_by_txt");
     }
 
-    if (++name != domainNames.end())
+    if (++identifier != identifiers.end())
     {
         // We have one or more Subject Alternative Names
         X509_EXTENSIONSptr extensions(sk_X509_EXTENSION_new_null());
@@ -414,9 +415,9 @@ inline std::pair<std::string, std::string> makeCertificateSigningRequest(const s
             {
                 value += ", ";
             }
-            value += "DNS:" + *name;
+            value += toString(identifier->type) + ":" + identifier->name;
         }
-        while (++name != domainNames.end());
+        while (++identifier != identifiers.end());
 
         if (!sk_X509_EXTENSION_push(extensions.get(), X509V3_EXT_conf_nid(nullptr, nullptr, NID_subject_alt_name, value.c_str())))
         {
@@ -634,7 +635,8 @@ struct ForwardAcmeError
         next(std::move(error));
     }
 
-    void operator()(AcmeClient client, AcmeException error) const {
+    template <typename Client>
+    void operator()(Client client, AcmeException error) const {
         next(std::move(client), std::move(error));
     }
 
@@ -873,21 +875,21 @@ void processAuthorizations(Callback callback, ChallengeCallback challengeCallbac
                     return;
                 }
 
-                std::string domain = authz.at("identifier").at("value");
+                std::string identifier = authz.at("identifier").at("value");
 
                 auto challenges = authz.at("challenges");
                 auto httpChallenge = std::find_if(challenges.begin(), challenges.end(),
                     [](auto challenge){ return challenge.at("type") == "http-01"; });
 
                 if(httpChallenge == challenges.end()) {
-                    next(std::move(client), AcmeException("Http challenge not found for " + domain));
+                    next(std::move(client), AcmeException("Http challenge not found for " + identifier));
                     return;
                 }
 
                 std::string token = httpChallenge->at("token");
                 std::string location = "/.well-known/acme-challenge/"s + token;
                 std::string keyAuthorization = token + "." + client.impl_->jwkThumbprint();
-                challengeCallback(domain, location, keyAuthorization);
+                challengeCallback(identifier, location, keyAuthorization);
                 challengeUrls.push(httpChallenge->at("url"));
                 processAuthorizations(
                     std::move(next),
@@ -903,25 +905,25 @@ void processAuthorizations(Callback callback, ChallengeCallback challengeCallbac
 }
 
 template <typename Callback, typename ChallengeCallback>
-void orderCertificate(Callback callback, ChallengeCallback challengeCallback, AcmeClient client, std::vector<std::string> domains) {
-    if (domains.empty()) {
-        callback(std::move(client), AcmeException("There must be at least one domain name in a certificate"));
+void orderCertificate(Callback callback, ChallengeCallback challengeCallback, AcmeClient client, std::vector<identifier> identifiers) {
+    if (identifiers.empty()) {
+        callback(std::move(client), AcmeException("There must be at least one identifier name in a certificate"));
         return;
     }
 
     // Create the order
     std::string payload = u8R"({"identifiers": [)";
     bool first = true;
-    for (const std::string& domain : domains)
+    for (const identifier& identifier : identifiers)
     {
 		/*
-		Just check for a '"' in the domain name to make sure that we send
+		Just check for a '"' in the identifier name to make sure that we send
 		a validly formed json payload. The acme service should validate
-		that the domain name is well formed.
+		that the identifier name is well formed.
 		*/
-		if (domain.find('"') != std::string::npos)
+		if (identifier.name.find('"') != std::string::npos)
 		{
-			callback(std::move(client), AcmeException("Certificate requested for invalid domain name: "s + domain));
+			callback(std::move(client), AcmeException("Certificate requested for invalid identifier name: "s + identifier.name));
 			return;
 		}
 
@@ -933,8 +935,8 @@ void orderCertificate(Callback callback, ChallengeCallback challengeCallback, Ac
 
         payload += u8R"(
                         {
-                            "type": "dns",
-                            "value": ")"s + domain + u8R"("
+                            "type": ")"s + toString(identifier.type) + u8R"(",
+                            "value": ")"s + identifier.name + u8R"("
                         }
                        )";
     }
@@ -946,20 +948,21 @@ void orderCertificate(Callback callback, ChallengeCallback challengeCallback, Ac
         forwardAcmeError(
             [
                 challengeCallback = std::move(challengeCallback),
-                domains = std::move(domains)
+                identifiers = std::move(identifiers)
             ]
             (auto next, auto client, auto response) mutable {
 
                 std::string currentOrderUrl = response.headerValue_;
 
+                // TODO: try
                 auto json = nlohmann::json::parse(response.response_);
                 auto authorizations = json.at("authorizations");
 
                 processAuthorizations(
                     forwardAcmeError(
-                        [domains = std::move(domains), currentOrderUrl = std::move(response.headerValue_), finalizeUrl = json.at("finalize")]
+                        [identifiers = std::move(identifiers), currentOrderUrl = std::move(response.headerValue_), finalizeUrl = json.at("finalize")]
                         (auto next, auto client, auto challenges) mutable {
-                            next(std::move(client), std::move(challenges), std::move(domains), std::move(finalizeUrl), std::move(currentOrderUrl));
+                            next(std::move(client), std::move(challenges), std::move(identifiers), std::move(finalizeUrl), std::move(currentOrderUrl));
                         },
                         std::move(next)
                     ),
@@ -1051,14 +1054,15 @@ void checkChallenges(Callback callback, AcmeClient client, InStack<std::vector<s
 }
 
 template <typename Callback>
-void retrieveCertificate(Callback callback, AcmeClient client, std::vector<std::string> domains, std::vector<std::string> challenges, std::string orderUrl, std::string finalizeUrl){
+void retrieveCertificate(Callback callback, AcmeClient client, std::vector<identifier> identifiers, std::vector<std::string> challenges, std::string orderUrl, std::string finalizeUrl){
     checkChallenges(
         forwardAcmeError([
-            domains = std::move(domains),
+            identifiers = std::move(identifiers),
             orderUrl = std::move(orderUrl),
             finalizeUrl = std::move(finalizeUrl)
         ](auto next, auto client) mutable {
-            auto r = makeCertificateSigningRequest(domains);
+            // TODO: try
+            auto r = makeCertificateSigningRequest(identifiers);
             std::string csr = r.first;
             std::string privateKey = r.second;
             sendRequest(
