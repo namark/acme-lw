@@ -36,6 +36,22 @@ namespace acme_lw
 using namespace std::literals;
 using acme_lw_internal::Response;
 
+template <typename Range, typename ToString>
+std::string join(const Range& rng, const std::string& seperator, ToString toStr) {
+    return std::accumulate(rng.begin(), rng.end(), std::string(), [&toStr, &seperator]
+    (const auto& all, const auto& one) {
+        auto str = toStr(one);
+        return all.empty() ? str : all + seperator + str;
+    });
+}
+
+template <typename Range>
+std::string join(const Range& rng, const std::string& seperator) {
+    return join(rng, seperator, [](auto&& x)
+        -> std::string { return std::forward<decltype(x)>(x); });
+}
+
+
 using acme_lw_internal::Response;
 // Smart pointers for OpenSSL types
 template <typename T, void(*F)(T*)>
@@ -305,9 +321,8 @@ hmacAlg getHmacAlg(const std::string& key)
         [keySize = key.size()] (auto pair) { return keySize == pair.keySize; });
 
     if(found == map.end()) {
-        auto expected = std::accumulate(map.begin(), map.end(), std::string(), [](auto& all, auto& pair) {
-            auto one = "size " + std::to_string(pair.keySize) + " for " + pair.alg.name;
-            return all.empty() ? one : all + ", " + one;
+        auto expected = join(map, ", ", [](const auto& pair) {
+            return "size " + std::to_string(pair.keySize) + " for " + pair.alg.name;
         });
         throw AcmeException("Unexpected HMAC key size: " + std::to_string(key.size()) + '\n'
             + "key: " + urlSafeBase64Encode(key) + '\n'
@@ -387,7 +402,7 @@ inline std::string toPemString(const EVP_PKEYptr& key) {
 }
 
 // returns pair<CSR, privateKey>
-inline std::pair<std::string, std::string> makeCertificateSigningRequest(const std::vector<identifier>& identifiers) {
+inline std::pair<std::vector<char>, std::string> makeCertificateSigningRequest(const std::vector<identifier>& identifiers) {
 
     X509_REQptr req(X509_REQ_new());
 
@@ -450,7 +465,7 @@ inline std::pair<std::string, std::string> makeCertificateSigningRequest(const s
         throw acme_lw::AcmeException("Failure in i2d_X509_REQ_bio");
     }
 
-    return make_pair(urlSafeBase64Encode(toVector(reqBio.get())), privateKey);
+    return make_pair(toVector(reqBio.get()), privateKey);
 }
 
 inline std::string sha256(const std::string& s)
@@ -1015,14 +1030,14 @@ void waitForValid(Callback callback, AcmeClient client, std::string url, std::ch
     // TODO: sendRequest need to move the url into the callback, preventing the need to capture it
     sendRequest(
         forwardAcmeError([url = nextUrl, timeout, interval](auto next, auto client, auto response) mutable {
-             auto json = nlohmann::json::parse(response.response_);
-             if(json.at("status") == "valid") {
-                next(std::move(client));
-             } else {
-                QTimer::singleShot(interval.count(), [next = std::move(next), client = std::move(client), url = std::move(url), timeout, interval]() mutable {
-                    waitForValid(std::move(next), std::move(client), std::move(url), timeout - interval, interval);
-                });
-             }
+            auto json = nlohmann::json::parse(response.response_);
+            if(json.at("status") == "valid") {
+               next(std::move(client));
+            } else {
+               QTimer::singleShot(interval.count(), [next = std::move(next), client = std::move(client), url = std::move(url), timeout, interval]() mutable {
+                   waitForValid(std::move(next), std::move(client), std::move(url), timeout - interval, interval);
+               });
+            }
         }, std::move(callback)),
     std::move(client), std::move(url), "");
 }
@@ -1068,7 +1083,7 @@ void retrieveCertificate(Callback callback, AcmeClient client, OrderInfo orderIn
         ](auto next, auto client) mutable {
             // TODO: try
             auto r = makeCertificateSigningRequest(identifiers);
-            std::string csr = r.first;
+            std::string csr = urlSafeBase64Encode(r.first);
             std::string privateKey = r.second;
             sendRequest(
                 forwardAcmeError([

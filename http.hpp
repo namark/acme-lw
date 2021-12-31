@@ -11,6 +11,7 @@
 #include <type_traits>
 
 #include <QtNetwork/QNetworkReply>
+// #include <QUrlQuery>
 
 namespace acme_lw_internal
 {
@@ -38,6 +39,41 @@ void getHeader(Callback callback, const std::string& url, const char* headerKey)
             } else {
                 callback(AcmeException("Reply missing header: "s + headerKey));
             }
+        }
+    });
+}
+
+template <typename Callback>
+void doPost(Callback callback, const std::string& url, const std::vector<std::pair<std::string, std::string>>& params) {
+    QNetworkRequest request(QString::fromStdString(url));
+
+    // request.setHeader(QNetworkRequest::ContentTypeHeader, "application/x-www-form-urlencoded");
+    // QUrlQuery query;
+    // for(auto&& param : params) {
+    //     query.addQueryItem(param.first.c_str(), param.second.c_str());
+    // }
+
+    std::string queryStr{};
+    if(!params.empty())
+    {
+        queryStr += params.front().first + "=" + params.front().second;
+        for(auto param = params.begin() + 1; param != params.end(); ++param) {
+            queryStr += "&" + param->first + "=" + param->second;
+        }
+    }
+
+    QNetworkReply* reply = NetworkAccessManager::getInstance().post(request, queryStr.c_str());
+
+    QObject::connect(reply, &QNetworkReply::finished, [reply, callback = std::move(callback)]() mutable {
+        auto replyPtr = QDelayedNetworkReply(reply);
+        if(replyPtr->error() != QNetworkReply::NoError) {
+            callback(AcmeException("Error: " + replyPtr->errorString().toStdString() + '\n'
+                + "Response: " + replyPtr->readAll().toStdString()));
+        } else {
+            Response response{};
+            response.response_.resize(replyPtr->bytesAvailable());
+            replyPtr->read(response.response_.data(), response.response_.size());
+            callback(std::move(response));
         }
     });
 }
