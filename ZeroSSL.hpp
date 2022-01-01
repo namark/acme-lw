@@ -98,7 +98,7 @@ void orderCertificate(Callback callback, ZeroSSLClient client, std::vector<ident
                 errorType = error.at("type").template get<std::string>();
                 errorInfo = error.value("info", "Unknown error: " + errorType);
             } else {
-                orderInfo.certId = json.at("id");
+                orderInfo.certId = json.at("id").template get<std::string>();
                 orderInfo.csrKey = csrKey;
                 orderInfo.identifiers = std::move(identifiers);
                 auto validation = json.at("validation").at("other_methods");
