@@ -11,7 +11,6 @@
 #include <type_traits>
 
 #include <QtNetwork/QNetworkReply>
-// #include <QUrlQuery>
 
 namespace acme_lw_internal
 {
@@ -47,18 +46,14 @@ template <typename Callback>
 void doPost(Callback callback, const std::string& url, const std::vector<std::pair<std::string, std::string>>& params) {
     QNetworkRequest request(QString::fromStdString(url));
 
-    // request.setHeader(QNetworkRequest::ContentTypeHeader, "application/x-www-form-urlencoded");
-    // QUrlQuery query;
-    // for(auto&& param : params) {
-    //     query.addQueryItem(param.first.c_str(), param.second.c_str());
-    // }
+    request.setHeader(QNetworkRequest::ContentTypeHeader, "application/x-www-form-urlencoded");
 
     std::string queryStr{};
     if(!params.empty())
     {
         queryStr += params.front().first + "=" + params.front().second;
         for(auto param = params.begin() + 1; param != params.end(); ++param) {
-            queryStr += "&" + param->first + "=" + param->second;
+            queryStr += "&" + param->first + "=" + QUrl::toPercentEncoding(param->second.c_str()).toStdString();
         }
     }
 
