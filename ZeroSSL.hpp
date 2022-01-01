@@ -49,7 +49,7 @@ void createAccount(Callback callback, ZeroSSLClient client) {
             try {
                 auto json = nlohmann::json::parse(response.response_);
                 auto error = json.at("error");
-                errorType = error.at("type");
+                errorType = error.at("type").template get<std::string>();
                 errorInfo = error.value("info", errorInfo);
             } catch (const std::exception& e) {
                 next(std::move(client), AcmeException("ZeroSSL createAccount() failed to parse response: "s + e.what()));
@@ -95,7 +95,7 @@ void orderCertificate(Callback callback, ZeroSSLClient client, std::vector<ident
             if(json.count("error") == 1) {
                 errorOccurred = true;
                 auto error = json["error"];
-                errorType = error.at("type");
+                errorType = error.at("type").template get<std::string>();
                 errorInfo = error.value("info", "Unknown error: " + errorType);
             } else {
                 orderInfo.certId = json.at("id");
@@ -181,7 +181,7 @@ void retrieveCertificate(Callback callback, ZeroSSLClient client, ZeroSSLOrderIn
                 if(json.count("error") == 1) {
                     errorOccurred = true;
                     auto error = json["error"];
-                    errorType = error.at("type");
+                    errorType = error.at("type").template get<std::string>();
                     errorInfo = error.value("info", "Unknown error: " + errorType);
                 }
             } catch (const std::exception& e) {
@@ -207,7 +207,7 @@ void retrieveCertificate(Callback callback, ZeroSSLClient client, ZeroSSLOrderIn
                         if(json.count("error") == 1) {
                             errorOccurred = true;
                             auto error = json["error"];
-                            errorType = error.at("type");
+                            errorType = error.at("type").template get<std::string>();
                             errorInfo = error.value("info", "Unknown error: " + errorType);
                         } else {
                             cert.fullchain = json.at("certificate.crt");
