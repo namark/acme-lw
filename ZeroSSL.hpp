@@ -210,7 +210,7 @@ void retrieveCertificate(Callback callback, ZeroSSLClient client, ZeroSSLOrderIn
                             errorType = error.at("type").template get<std::string>();
                             errorInfo = error.value("info", "Unknown error: " + errorType);
                         } else {
-                            cert.fullchain = json.at("certificate.crt");
+                            cert.fullchain = json.at("certificate.crt").template get<std::string>();
                         }
                     } catch (const std::exception& e) {
                         next(std::move(client), AcmeException("ZeroSSL retrieveCertificate() failed to parse response: "s + e.what()));
