@@ -138,8 +138,8 @@ void orderCertificate(Callback callback, ZeroSSLClient client, std::vector<ident
     });
 }
 
-template <typename Callback>
-void waitForValid(Callback callback, ZeroSSLClient client, std::string url, std::chrono::milliseconds timeout, std::chrono::milliseconds interval = 1s) {
+template <typename Callback, typename Value>
+void waitForValid(Callback callback, ZeroSSLClient client, std::string url, std::string key, Value value, std::chrono::milliseconds timeout, std::chrono::milliseconds interval = 1s) {
     if(timeout <= 0ms) {
         callback(std::move(client), AcmeException("ZeroSSL status check timeout: " + url));
         return;
@@ -148,20 +148,27 @@ void waitForValid(Callback callback, ZeroSSLClient client, std::string url, std:
     auto nextUrl = url; // explicit copy, since can't rely on order of evaluation of function parameters
     // TODO: need to move the url into the callback, preventing the need to capture it
     acme_lw_internal::doGet(
-        forwardAcmeError([client = std::move(client), url = nextUrl, timeout, interval](auto next, auto response) mutable {
-            int valid = 0;
+        forwardAcmeError([
+            client = std::move(client), url = nextUrl,
+            key = std::move(key), value = std::move(value),
+            timeout, interval
+        ](auto next, auto response) mutable {
+            Value valid{};
             try {
                 auto json = nlohmann::json::parse(response.response_);
-                valid = json.at("validation_completed");
+                valid = json.at(key);
             } catch (const std::exception& e) {
                 next(std::move(client), AcmeException("ZeroSSL waitForValid() failed to parse response: "s + e.what()));
                 return;
             }
-            if(valid == 1) {
+            if(valid == value) {
                next(std::move(client));
             } else {
-               QTimer::singleShot(interval.count(), [next = std::move(next), client = std::move(client), url = std::move(url), timeout, interval]() mutable {
-                   waitForValid(std::move(next), std::move(client), std::move(url), timeout - interval, interval);
+               QTimer::singleShot(interval.count(), [
+                   next = std::move(next), client = std::move(client), url = std::move(url),
+                   key = std::move(key), value = std::move(value), timeout, interval
+               ]() mutable {
+                   waitForValid(std::move(next), std::move(client), std::move(url), std::move(key), std::move(value), timeout - interval, interval);
                });
             }
         }, std::move(callback)),
@@ -196,36 +203,39 @@ void retrieveCertificate(Callback callback, ZeroSSLClient client, ZeroSSLOrderIn
 
             auto statusUrl = client.addAccessKey(ZeroSSLRestAPI::URL + ZeroSSLRestAPI::CERT_ENDPOINT + "/" + info.certId + ZeroSSLRestAPI::STATUS);
             waitForValid(forwardAcmeError([info = std::move(info)](auto next, auto client){
-                auto downloadUrl = client.addAccessKey(ZeroSSLRestAPI::URL + ZeroSSLRestAPI::CERT_ENDPOINT + "/" + info.certId + ZeroSSLRestAPI::DOWNLOAD);
-                acme_lw_internal::doGet(forwardAcmeError([client = std::move(client), info = std::move(info)](auto next, auto response){
-                    Certificate cert;
-                    bool errorOccurred = false;
-                    std::string errorType{};
-                    std::string errorInfo{};
-                    try {
-                        auto json = nlohmann::json::parse(response.response_);
-                        if(json.count("error") == 1) {
-                            errorOccurred = true;
-                            auto error = json["error"];
-                            errorType = error.at("type").template get<std::string>();
-                            errorInfo = error.value("info", "Unknown error: " + errorType);
-                        } else {
-                            cert.fullchain = json.at("certificate.crt").template get<std::string>();
+                auto certUrl = client.addAccessKey(ZeroSSLRestAPI::URL + ZeroSSLRestAPI::CERT_ENDPOINT + "/" + info.certId);
+                waitForValid(forwardAcmeError([info = std::move(info)](auto next, auto client){
+                    auto downloadUrl = client.addAccessKey(ZeroSSLRestAPI::URL + ZeroSSLRestAPI::CERT_ENDPOINT + "/" + info.certId + ZeroSSLRestAPI::DOWNLOAD);
+                    acme_lw_internal::doGet(forwardAcmeError([client = std::move(client), info = std::move(info)](auto next, auto response){
+                        Certificate cert;
+                        bool errorOccurred = false;
+                        std::string errorType{};
+                        std::string errorInfo{};
+                        try {
+                            auto json = nlohmann::json::parse(response.response_);
+                            if(json.count("error") == 1) {
+                                errorOccurred = true;
+                                auto error = json["error"];
+                                errorType = error.at("type").template get<std::string>();
+                                errorInfo = error.value("info", "Unknown error: " + errorType);
+                            } else {
+                                cert.fullchain = json.at("certificate.crt").template get<std::string>();
+                            }
+                        } catch (const std::exception& e) {
+                            next(std::move(client), AcmeException("ZeroSSL retrieveCertificate() failed to parse response: "s + e.what()));
+                            return;
                         }
-                    } catch (const std::exception& e) {
-                        next(std::move(client), AcmeException("ZeroSSL retrieveCertificate() failed to parse response: "s + e.what()));
-                        return;
-                    }
 
-                    if(errorOccurred) {
-                        next(std::move(client), AcmeException("ZeroSSL retrieveCertificate() failed: " + errorInfo));
-                        return;
-                    }
+                        if(errorOccurred) {
+                            next(std::move(client), AcmeException("ZeroSSL retrieveCertificate() failed: " + errorInfo));
+                            return;
+                        }
 
-                    cert.privkey = std::move(info.csrKey);
-                    next(std::move(client), std::move(cert));
-                }, std::move(next)), downloadUrl);
-            }, std::move(next)), std::move(client), std::move(statusUrl), 10s);
+                        cert.privkey = std::move(info.csrKey);
+                        next(std::move(client), std::move(cert));
+                    }, std::move(next)), downloadUrl);
+                }, std::move(next)), std::move(client), std::move(certUrl), "status", "issued"s, 10s);
+            }, std::move(next)), std::move(client), std::move(statusUrl), "validation_completed", 1, 10s);
         }, std::move(callback)),
         std::move(url), {{"validation_method", "HTTP_CSR_HASH"}}
     );
