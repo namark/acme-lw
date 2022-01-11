@@ -156,7 +156,7 @@ void waitForValid(Callback callback, ZeroSSLClient client, std::string url, std:
             Value valid{};
             try {
                 auto json = nlohmann::json::parse(response.response_);
-                valid = json.at(key);
+                valid = json.at(key).template get<Value>();
             } catch (const std::exception& e) {
                 next(std::move(client), AcmeException("ZeroSSL waitForValid() failed to parse response: "s + e.what()));
                 return;
