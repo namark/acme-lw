@@ -78,8 +78,12 @@ struct identifier {
 
 std::string toString(enum identifier::type t);
 
-//TODO: document/specify callback parameters
-// maybe also define callback class interface to restore interface/implementation division
+// TODO: document/specify callback parameters,
+// maybe also define callback class interface to restore
+// interface/implementation division
+//
+// TODO: callback should be the last argument,
+// defaulted arguments could be replaced by overloads, if necessary
 /**
     The signingKey is the Acme account private key used to sign
     requests to the acme CA, in pem format.
