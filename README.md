@@ -4,7 +4,10 @@ This is WIP fork of [acme-lw](https://github.com/jmccl/acme-lw) adapted for use 
 - The API has been completely reworked to support asynchronous operation (interface-implementing spit is lost).
 - No API for cancellation of the asynchronous operations.
 - Error handling is not entirely consistent (exceptions are sometimes passed to callbacks, sometimes thrown).
-- No standalone build configuration (full source is included as submodule in a Qt project).
+- No standalone build configuration (full source is included as a submodule in a Qt project).
+- ACME External Account Binding
+- [IP Identifier Validation Extension](https://datatracker.ietf.org/doc/html/rfc8738)
+- ZeroSSL REST API
 
 
 ## Acme Lightweight Client
