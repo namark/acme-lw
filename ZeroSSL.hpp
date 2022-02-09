@@ -139,9 +139,13 @@ void orderCertificate(Callback callback, ZeroSSLClient client, std::vector<ident
 }
 
 template <typename Callback, typename Value>
-void waitForValid(Callback callback, ZeroSSLClient client, std::string url, std::string key, Value value, std::chrono::milliseconds timeout, std::chrono::milliseconds interval = 1s) {
+void waitForValid(Callback callback, ZeroSSLClient client, std::string url, std::string key, Value value, std::chrono::milliseconds timeout, std::chrono::milliseconds interval = 1s, std::vector<AcmeException> errors = {}) {
     if(timeout <= 0ms) {
-        callback(std::move(client), AcmeException("ZeroSSL status check timeout: " + url));
+        auto errorLog = join(errors, "\n", [](auto error) {
+            return error.what();
+        });
+        callback(std::move(client), AcmeException("ZeroSSL status check timeout: " + url + "\n" +
+            "Error log:\n" + errorLog));
         return;
     }
 
@@ -151,25 +155,36 @@ void waitForValid(Callback callback, ZeroSSLClient client, std::string url, std:
         forwardAcmeError([
             client = std::move(client), url = nextUrl,
             key = std::move(key), value = std::move(value),
-            timeout, interval
+            timeout, interval,
+            errors = std::move(errors)
         ](auto next, auto response) mutable {
             Value valid{};
             try {
                 auto json = nlohmann::json::parse(response.response_);
                 valid = json.at(key).template get<Value>();
             } catch (const std::exception& e) {
-                next(std::move(client), AcmeException("ZeroSSL waitForValid() failed to parse response: "s + e.what()));
+                errors.push_back(AcmeException("ZeroSSL waitForValid() failed to parse response: "s + e.what()));
+                waitForValid(std::move(next), std::move(client),
+                    std::move(url), std::move(key), std::move(value),
+                    timeout - interval, interval,
+                    std::move(errors)
+                );
                 return;
             }
             if(valid == value) {
-               next(std::move(client));
+                next(std::move(client));
             } else {
-               QTimer::singleShot(interval.count(), [
-                   next = std::move(next), client = std::move(client), url = std::move(url),
-                   key = std::move(key), value = std::move(value), timeout, interval
-               ]() mutable {
-                   waitForValid(std::move(next), std::move(client), std::move(url), std::move(key), std::move(value), timeout - interval, interval);
-               });
+                QTimer::singleShot(interval.count(), [
+                    next = std::move(next), client = std::move(client), url = std::move(url),
+                    key = std::move(key), value = std::move(value), timeout, interval,
+                    errors = std::move(errors)
+                ]() mutable {
+                    waitForValid(std::move(next), std::move(client),
+                        std::move(url), std::move(key), std::move(value),
+                        timeout - interval, interval,
+                        std::move(errors)
+                    );
+                });
             }
         }, std::move(callback)),
     std::move(url));
