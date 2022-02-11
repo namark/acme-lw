@@ -11,50 +11,41 @@ namespace acme_lw
 // a sanity check for API url, we expect an error
 template <typename Callback>
 void init(Callback callback, std::string apiKey, ZeroSSLRestAPI) {
-#ifndef ACME_LW_ZEROSSL_SKIP_SANITY_CHECKS
-    acme_lw_internal::doGet(forwardAcmeError(
-        [apiKey = std::move(apiKey)](auto next, auto response){
-            std::string errorType{};
-            try {
-                nlohmann::json::parse(response.response_)
-                    .at("error").at("type");
-            } catch (const std::exception& e) {
-                next(AcmeException("ZeroSSL init() failed to parse response: "s + e.what()));
-                return;
-            }
-
-            next(ZeroSSLClient(std::move(apiKey)));
-        },
-        std::move(callback)
-    ), ZeroSSLRestAPI::URL + "/");
-#else
+    // There is no documented ZeroSSL API that can serve as sanity check here
+    // akin to acme directory. API key validity is checked in createAccount,
+    // this step ideally should just verify that the API base URL is correct.
     callback(ZeroSSLClient(std::move(apiKey)));
-#endif
 }
 
 // sanity check for access key, we expect a specific error
 template <typename Callback>
 void createAccount(Callback callback, ZeroSSLClient client) {
 #ifndef ACME_LW_ZEROSSL_SKIP_SANITY_CHECKS
-    auto url = client.addAccessKey(ZeroSSLRestAPI::URL + "/");
+    auto url = client.addAccessKey(ZeroSSLRestAPI::URL + ZeroSSLRestAPI::CERT_ENDPOINT);
     acme_lw_internal::doGet(forwardAcmeError(
         [client = std::move(client)](auto next, auto response){
-            std::string errorType{};
             std::string errorInfo{};
+            std::string errorType{};
+            bool apiError = false;
             try {
                 auto json = nlohmann::json::parse(response.response_);
-                auto error = json.at("error");
-                errorType = error.at("type").template get<std::string>();
-                errorInfo = error.value("info", errorInfo);
+                if(json.count("error") == 1) {
+                    apiError = true;
+                    auto error = json["error"];
+                    errorType = error.at("type").template get<std::string>();
+                    errorInfo = error.value("info", "Unknown error: " + errorType);
+                } else {
+                    json.at("total_count");
+                }
             } catch (const std::exception& e) {
                 next(std::move(client), AcmeException("ZeroSSL createAccount() failed to parse response: "s + e.what()));
                 return;
             }
 
-            if(errorType == "invalid_api_function") {
-                next(std::move(client));
-            } else {
+            if(apiError) {
                 next(std::move(client), AcmeException("ZeroSSL createAccount() failed: " + errorInfo));
+            } else {
+                next(std::move(client));
             }
         },
         std::move(callback)
