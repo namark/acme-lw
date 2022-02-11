@@ -8,11 +8,6 @@
 namespace acme_lw
 {
 
-struct ZeroSSLError {
-    std::string type;
-    std::string info;
-};
-
 // a sanity check for API url, we expect an error
 template <typename Callback>
 void init(Callback callback, std::string apiKey, ZeroSSLRestAPI) {
