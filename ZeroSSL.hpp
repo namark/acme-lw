@@ -235,8 +235,8 @@ void retrieveCertificate(Callback callback, ZeroSSLClient client, ZeroSSLOrderIn
                         cert.privkey = std::move(info.csrKey);
                         next(std::move(client), std::move(cert));
                     }, std::move(next)), downloadUrl);
-                }, std::move(next)), std::move(client), std::move(certUrl), "status", "issued"s, 10s);
-            }, std::move(next)), std::move(client), std::move(statusUrl), "validation_completed", 1, 10s);
+                }, std::move(next)), std::move(client), std::move(certUrl), "status", "issued"s, 60s);
+            }, std::move(next)), std::move(client), std::move(statusUrl), "validation_completed", 1, 60s);
         }, std::move(callback)),
         std::move(url), {{"validation_method", "HTTP_CSR_HASH"}}
     );
