@@ -1,7 +1,7 @@
 ## Fork info
 This is WIP fork of [acme-lw](https://github.com/jmccl/acme-lw) adapted for use in [Vircadia](https://github.com/vircadia) project:
 - curl has been replaced with Qt.
-- The API has been completely reworked to support asynchronous operation (interface-implementing spit is lost).
+- The API has been completely reworked to support asynchronous operation (interface-implementing split is lost).
 - No API for cancellation of the asynchronous operations.
 - Error handling is not entirely consistent (exceptions are sometimes passed to callbacks, sometimes thrown).
 - No standalone build configuration (full source is included as a submodule in a Qt project).
