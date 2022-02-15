@@ -252,7 +252,7 @@ ExpiryResult<T> extractExpiryDataError(const acme_lw::Certificate& certificate, 
     }
     X509ptr x509(PEM_read_bio_X509(bio.get(), nullptr, nullptr, nullptr));
 
-    ASN1_TIME * t = X509_getm_notAfter(x509.get());
+    const ASN1_TIME * t = X509_get0_notAfter(x509.get());
 
     return makeExpiryResult(extractor(t));
 }
